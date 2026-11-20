@@ -1,1 +1,7 @@
-{ "framework": "vite" }
+{
+  "framework": "vite",
+  "functions": {
+    "api/agent.js": { "maxDuration": 60 },
+    "api/link.js": { "maxDuration": 30 }
+  }
+}

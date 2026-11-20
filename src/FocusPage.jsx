@@ -4,14 +4,14 @@ import PixelWindow from "./PixelWindow";
 import SpotifyPlayer from "./SpotifyPlayer";
 import { ProgressBadge } from "./Wardrobe";
 import PetBubble from "./PetBubble";
-import { MODE_LABELS, PRESETS, formatClock } from "./usePomodoro";
+import { LIMITS, MODE_LABELS, PRESETS, formatClock } from "./usePomodoro";
 import { todayKey } from "./dateUtils";
 import { SoundToggle, playSound, setSoundSettings, useSoundSettings } from "./sounds";
 
 export const GOAL_COLORS = ["#fff3a0", "#ffc9de", "#c6e8ff", "#d4f5b5", "#ffd9a8"];
 const TILTS = [-2, 1.5, -1, 2, -1.5, 1];
 
-export default function FocusPage({ timer, profile, petState, onPet, onAdopt, goals, onAddGoal, onUpdateGoal, onDeleteGoal, onPopOut, popOutOpen, spotify, streak, onOpenWardrobe, talk }) {
+export default function FocusPage({ timer, profile, petState, onPet, onAdopt, goals, onAddGoal, onUpdateGoal, onDeleteGoal, onPopOut, popOutOpen, spotify, streak, onOpenWardrobe, talk, tasks = [] }) {
   const pet = profile.pet;
   const today = profile.focusToday?.date === todayKey() ? profile.focusToday.count : 0;
 
@@ -33,7 +33,13 @@ export default function FocusPage({ timer, profile, petState, onPet, onAdopt, go
             ))}
           </div>
 
-          <div className={`pet-stage pet-stage--${{ focus: "day", short: "sunset", long: "night" }[timer.mode]}`}>
+          {timer.mode === "timer" ? (
+            <SingleTimerSettings timer={timer} tasks={tasks} />
+          ) : timer.preset === "custom" && (
+            <CustomPomodoroSettings timer={timer} />
+          )}
+
+          <div className={`pet-stage pet-stage--${{ focus: "day", short: "sunset", long: "night", timer: "day" }[timer.mode]}`}>
             {pet ? (
               <>
                 <button className="wardrobe-btn" onClick={onOpenWardrobe} title="Dress up your pet">👕 Wardrobe</button>
@@ -50,12 +56,15 @@ export default function FocusPage({ timer, profile, petState, onPet, onAdopt, go
 
           <ProgressBadge profile={profile} streak={streak} />
 
+          {timer.mode === "timer" && timer.timerLabel && (
+            <div className="timer-task-label">⏱ {timer.timerLabel}</div>
+          )}
           <div className="timer-clock" aria-live="off">{formatClock(timer.left)}</div>
           <div className="pixel-bar timer-bar">
             <div className="pixel-bar__fill" style={{ width: `${Math.min(100, timer.progress * 100)}%` }} />
           </div>
 
-          <div className="timer-controls">
+          <div className={`timer-controls ${timer.mode === "timer" ? "timer-controls--two" : ""}`}>
             {timer.running ? (
               <button className="pixel-btn pixel-btn--light" onClick={timer.pause}>Pause</button>
             ) : (
@@ -64,7 +73,9 @@ export default function FocusPage({ timer, profile, petState, onPet, onAdopt, go
               </button>
             )}
             <button className="pixel-btn pixel-btn--light" onClick={timer.reset}>Reset</button>
-            <button className="pixel-btn pixel-btn--light" onClick={timer.skip}>Skip</button>
+            {timer.mode !== "timer" && (
+              <button className="pixel-btn pixel-btn--light" onClick={timer.skip}>Skip</button>
+            )}
           </div>
 
           {onPopOut && (
@@ -74,21 +85,25 @@ export default function FocusPage({ timer, profile, petState, onPet, onAdopt, go
           )}
 
           <div className="timer-footer">
-            <span className="cycle-dots" title="Focus sessions this round (long break after 4)">
-              {[0, 1, 2, 3].map(i => (
-                <span key={i} className={`cycle-dot ${i < timer.cycle % 4 || (timer.cycle > 0 && timer.cycle % 4 === 0 && timer.mode === "long") ? "cycle-dot--on" : ""}`} />
-              ))}
-            </span>
+            {timer.mode !== "timer" && (
+              <span className="cycle-dots" title="Focus sessions this round (long break after 4)">
+                {[0, 1, 2, 3].map(i => (
+                  <span key={i} className={`cycle-dot ${i < timer.cycle % 4 || (timer.cycle > 0 && timer.cycle % 4 === 0 && timer.mode === "long") ? "cycle-dot--on" : ""}`} />
+                ))}
+              </span>
+            )}
             <span>Today: <b>{today}</b> 🍅 · Total: <b>{profile.focusSessions || 0}</b></span>
             <SoundControls />
-            <select
-              className="form-select preset-select"
-              value={timer.preset}
-              onChange={e => timer.setPreset(e.target.value)}
-              aria-label="Timer length"
-            >
-              {Object.entries(PRESETS).map(([id, p]) => <option key={id} value={id}>{p.label}</option>)}
-            </select>
+            {timer.mode !== "timer" && (
+              <select
+                className="form-select preset-select"
+                value={timer.preset}
+                onChange={e => timer.setPreset(e.target.value)}
+                aria-label="Timer length"
+              >
+                {Object.entries(PRESETS).map(([id, p]) => <option key={id} value={id}>{p.label}</option>)}
+              </select>
+            )}
           </div>
         </PixelWindow>
 
@@ -96,6 +111,97 @@ export default function FocusPage({ timer, profile, petState, onPet, onAdopt, go
       </div>
 
       <GoalsBoard goals={goals} onAdd={onAddGoal} onUpdate={onUpdateGoal} onDelete={onDeleteGoal} />
+    </div>
+  );
+}
+
+/*
+ * Number box for minutes. Typing is kept as a draft and only saved on blur or Enter,
+ * so clearing the box to type a new number doesn't snap it to the minimum.
+ */
+function MinutesField({ kind, label, value, onChange, disabled }) {
+  const [draft, setDraft] = useState(null);
+  const [min, max] = LIMITS[kind];
+  const commit = () => {
+    if (draft !== null && draft !== "") onChange(draft);
+    setDraft(null);
+  };
+  return (
+    <label className="minutes-field">
+      <span>{label}</span>
+      <input
+        type="number"
+        className="form-input"
+        min={min}
+        max={max}
+        inputMode="numeric"
+        value={draft ?? value}
+        disabled={disabled}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={e => { if (e.key === "Enter") e.target.blur(); }}
+      />
+      <span className="minutes-field__unit">min</span>
+    </label>
+  );
+}
+
+/* Shown when the "Custom" length is picked: the student's own Pomodoro lengths. */
+function CustomPomodoroSettings({ timer }) {
+  const locked = timer.running;
+  return (
+    <div className="timer-settings">
+      <div className="timer-settings__row">
+        <MinutesField kind="focus" label="Focus" value={timer.custom.focus} disabled={locked} onChange={v => timer.setCustom({ focus: v })} />
+        <MinutesField kind="short" label="Short break" value={timer.custom.short} disabled={locked} onChange={v => timer.setCustom({ short: v })} />
+        <MinutesField kind="long" label="Long break" value={timer.custom.long} disabled={locked} onChange={v => timer.setCustom({ long: v })} />
+      </div>
+      {locked && <div className="timer-settings__hint">Pause or reset to change the lengths.</div>}
+    </div>
+  );
+}
+
+const QUICK_MINUTES = [15, 30, 45, 60, 90];
+
+/* Timer mode: one countdown for one task, with no breaks. */
+function SingleTimerSettings({ timer, tasks }) {
+  const locked = timer.running;
+  const openTasks = tasks.filter(t => !t.done && t.name);
+  return (
+    <div className="timer-settings">
+      <label className="timer-settings__task">
+        <span>Working on</span>
+        <input
+          className="form-input"
+          list="timer-task-options"
+          placeholder="e.g. Lab Report (optional)"
+          maxLength={60}
+          value={timer.timerLabel}
+          onChange={e => timer.setTimerLabel(e.target.value)}
+        />
+        <datalist id="timer-task-options">
+          {openTasks.map(t => (
+            <option key={t.id} value={t.code ? `${t.code} · ${t.name}` : t.name} />
+          ))}
+        </datalist>
+      </label>
+      <div className="timer-settings__row">
+        <MinutesField kind="timer" label="Length" value={timer.timerMinutes} disabled={locked} onChange={timer.setTimerMinutes} />
+        <span className="quick-minutes">
+          {QUICK_MINUTES.map(m => (
+            <button
+              key={m}
+              type="button"
+              className={`quick-minutes__btn ${timer.timerMinutes === m ? "quick-minutes__btn--active" : ""}`}
+              disabled={locked}
+              onClick={() => timer.setTimerMinutes(m)}
+            >
+              {m}
+            </button>
+          ))}
+        </span>
+      </div>
+      {locked && <div className="timer-settings__hint">Pause or reset to change the length.</div>}
     </div>
   );
 }

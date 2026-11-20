@@ -46,7 +46,7 @@ function newId() {
 }
 
 /* ── Folder grid ── */
-export default function CoursesPage({ courses, tasks, onAddCourse, onDeleteCourse, onUpdateCourse }) {
+export default function CoursesPage({ courses, tasks, onAddCourse, onDeleteCourse, onUpdateCourse, onReview }) {
   const [openId, setOpenId] = useState(null);
   const open = courses.find(c => c.id === openId);
 
@@ -61,6 +61,7 @@ export default function CoursesPage({ courses, tasks, onAddCourse, onDeleteCours
           setOpenId(null);
         }}
         onUpdate={changes => onUpdateCourse(open.id, changes)}
+        onReview={onReview}
       />
     );
   }
@@ -147,7 +148,7 @@ function AddCourseCard({ courses, onAddCourse }) {
 }
 
 /* ── One course folder: its links grouped by type ── */
-function CourseDetail({ course, tasks, onBack, onDelete, onUpdate }) {
+function CourseDetail({ course, tasks, onBack, onDelete, onUpdate, onReview }) {
   const links = course.links || [];
   const done = tasks.filter(t => t.done).length;
   const upcoming = tasks
@@ -181,6 +182,14 @@ function CourseDetail({ course, tasks, onBack, onDelete, onUpdate }) {
             Next up: {upcoming.map(t => t.name).join(", ")}
           </div>
         )}
+        {links.length > 0 && onReview && (
+          <button
+            className="breakdown-btn"
+            onClick={() => onReview(`Help me review ${course.code} ${course.name}. Look through my saved materials and summarise the main topics, then tell me what to revise first.`)}
+          >
+            📚 Review this course with AI
+          </button>
+        )}
       </div>
 
       {links.length === 0 && (
@@ -204,6 +213,15 @@ function CourseDetail({ course, tasks, onBack, onDelete, onUpdate }) {
                   <span className="link-row__label">{l.label}</span>
                   <span className="link-row__host">{hostOf(l.url)} ↗</span>
                 </a>
+                {onReview && (
+                  <button
+                    className="link-row__review"
+                    title="Summarise and quiz me on this"
+                    onClick={() => onReview(`Help me review "${l.label}" from ${course.code}. Summarise the key points, then quiz me.`)}
+                  >
+                    📖 Review
+                  </button>
+                )}
                 <button
                   className="link-row__del"
                   title="Remove link"

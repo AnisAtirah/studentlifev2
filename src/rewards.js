@@ -7,6 +7,15 @@ export const REWARDS = {
   goal: { xp: 30, coins: 15, label: "Goal achieved" },
 };
 
+/*
+ * Reward for finishing a task. Tasks from the weekly planner carry their own
+ * XP (5-50); coins stay at half the XP, like a normal task (10 XP, 5 coins).
+ */
+export function taskReward(task) {
+  const xp = Number.isInteger(task?.xp) ? task.xp : REWARDS.task.xp;
+  return { xp, coins: Math.max(1, Math.round(xp / 2)) };
+}
+
 /* Level L needs 100 × L XP to reach level L + 1 (100, 200, 300, ...). */
 export function levelInfo(xp = 0) {
   let level = 1;

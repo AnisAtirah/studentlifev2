@@ -7,6 +7,11 @@ Built with **React + Vite**, **Firebase** (Google sign-in + Firestore), and host
 ## Features
 - **Sign in** with Google, or try it as a guest (guests get sample data)
 - **Dashboard**: tasks with priorities, "Due Soon" warnings, next deadline, next exam, course progress
+- **Weekly Planner** (AI agent): say *"I have a DB quiz Friday and an OS assignment due Monday"*. It reads your tasks, courses and calendar, splits the work into study sessions across the week, saves them as tasks, and gives each one XP. You can reply to adjust the plan or undo it.
+- **Daily quest board** (AI agent, no chat): when you open the app, it looks at what's due or overdue and pins up to 3 quests for today, e.g. *"⚔️ Finish ERD draft (+50 XP)"*. Clearing a quest pays bonus XP on top of the task, and clearing the board pays bonus coins.
+- **Task breakdown** (AI agent): *"Break down my final year proposal"*, or press **Break into steps** on a task. It adds 5 or 6 steps under the task, each with a time estimate, a date and XP.
+- **Review my notes** (AI agent): *"Quiz me on my OS week 3 slides"*, or press **Review** on a link in a course folder. It opens the notes, slides and past papers saved in your courses, then summarises, explains or quizzes you. The planner and the task breakdown read them too, so study sessions name the real topics. Google files need sharing set to "Anyone with the link can view"; Drive folders can't be opened.
+- **Chat history**: the Planner page has a **History** tab with your last 30 chats. Open one to read it again, or carry on where you left off. Only the text you saw is saved, so a chat takes a few KB.
 - **My Course**: a folder per course for past year papers, notes and lecture Drive links
 - **Calendar**: exams, classes (weekly repeats), meetings, task due dates, live exam countdowns
 - **Focus**: Pomodoro timer (25/5 or 50/10) with an animated pet (cat, dog or turtle) that studies, sips coffee and naps with you
@@ -54,7 +59,23 @@ Skip this if you don't need music controls; the rest of the app works without it
    ```
    `.env.local` is private and is never committed.
 
-### 4. Start the app
+### 4. (Optional) Turn on the AI agents
+The planner, quest board, task breakdown and notes review are AI agents. They run on **Gemini** (free tier) or **Claude**. Skip this if you don't need them.
+
+**Gemini (free):**
+1. Create a key at https://aistudio.google.com/apikey.
+2. Add it to `.env.local`:
+   ```
+   GEMINI_API_KEY=your-key
+   ```
+
+**Claude:** create a key at https://platform.claude.com/, set a monthly spend limit, and add `ANTHROPIC_API_KEY=sk-ant-...` instead.
+
+If both keys are set, Gemini is used. Add `AI_PROVIDER=anthropic` to switch to Claude. Pick the Gemini model in the **AI model** menu on the Planner page (default Gemini 3.7 Flash). The choice is saved on that device and the quest board uses it too. The list lives in `src/agents/models.js`, and the server only accepts models from that list. `GEMINI_MODEL` sets the model used when none is picked, and `CLAUDE_MODEL` sets the Claude model (default `claude-opus-5-5`). When Gemini answers "high demand", the server waits and tries again, and a new chat moves to `GEMINI_FALLBACK_MODEL` (default `gemini-3.6-flash`). Restart `npm run dev` after editing `.env.local`.
+
+The keys have no `VITE_` prefix, so they stay on the server and never reach the browser. `npm run dev` serves `api/agent.js` locally, so you don't need the Vercel CLI.
+
+### 5. Start the app
 ```
 npm run dev
 ```
@@ -96,6 +117,22 @@ Vercel builds automatically when `main` is pushed (`vercel.json` uses the Vite p
 - Add `VITE_SPOTIFY_CLIENT_ID` in **Vercel → Project → Settings → Environment Variables**, then redeploy.
 - Add `https://<your-vercel-domain>/spotify-callback.html` as a Redirect URI in the Spotify dashboard.
 
+For the AI agents, add `GEMINI_API_KEY` (or `ANTHROPIC_API_KEY`) in the same place, plus `GEMINI_MODEL` / `AI_PROVIDER` if you use them. Don't add a `VITE_` prefix. `api/agent.js` is deployed as a serverless function.
+
+### How the AI agents work
+All four agents share one loop (`src/agents/runAgent.js`) that runs in the browser. Each turn goes to `/api/agent` with the agent's name. The server checks the student's Firebase ID token and forwards the conversation to Claude with that agent's prompt and tools from `src/agents/specs.js`. The browser never sends a prompt of its own, so the route can't be used as a general Claude proxy. When Claude asks for a tool, the browser runs it against Firestore with the student's own login, so the security rules in `firestore.rules` still apply. Each agent can only run the tools its spec lists.
+
+| Agent | Started by | Tools | Writes |
+|---|---|---|---|
+| Weekly planner | a chat message | list_courses, list_tasks, list_calendar, read_course_link, create_tasks | study sessions and deadlines with XP |
+| Quest board | opening the app, once a day | list_tasks, list_calendar, set_daily_quests | `dailyQuests` on the profile |
+| Task breakdown | a chat message or **Break into steps** | list_tasks, list_courses, read_course_link, create_subtask (called once per step) | steps with `parentId` and `estMinutes` |
+| Notes review | a chat message or **Review** on a course link | list_courses, read_course_link | nothing (read-only) |
+
+Tool inputs are checked in `src/agents/tools.js` before anything is saved. Course codes and task ids must exist, dates can't be in the past or after the deadline, XP must stay in range, and duplicates are rejected. A failed check goes back to Claude as an error, so it fixes the input and tries again.
+
+**Reading course links.** `read_course_link` sends only a course id and link id to `/api/link`. The server looks the URL up in the student's own course document (through the Firestore REST API, signed in as them), so it can't be used to fetch arbitrary sites. It rewrites Google Docs, Slides, Sheets and Drive file links to their export addresses, blocks private network addresses, follows at most 4 redirects, and stops at 15 MB. Text comes back in parts of about 30,000 characters; PDFs are converted to text with `unpdf`.
+
 ## Project structure
 ```
 src/
@@ -105,12 +142,22 @@ src/
   CoursesPage.jsx    course folders and links
   CalendarPage.jsx   calendar, agenda, exam countdowns
   FocusPage.jsx      Pomodoro, pet, goals board
+  PlannerPage.jsx    Planner page: the three agent chats and chat history
+  QuestBoard.jsx     daily quest board on Home
+  agents/specs.js    each agent's prompt, tools and effort (shared with the server)
+  agents/tools.js    the code behind each tool, with input checks (runs in the browser)
+  agents/runAgent.js the agent loop, the API call, and the no-chat quest run
   petSprites.js      pixel-art pets (drawn on a 28×28 canvas)
   petGear.js         Wardrobe items
   petTalk.js         the pet's motivation lines, fun facts and tips
   rewards.js         XP, levels and streaks
   spotify.js         Spotify login (PKCE) and playback controls
   sounds.jsx         8-bit sound effects
+api/agent.js         Vercel function: checks the login and calls Gemini or Claude
+api/_gemini.js       translates the agent conversation to and from the Gemini API
+api/link.js          Vercel function: opens a saved course link and returns its text
+api/_readLink.js     link fetching, Google export links, HTML/PDF to text
+api/_auth.js         Firebase login check and Firestore reads as the student
 firestore.rules      Firestore security rules
 public/              images and the Spotify login return page
 ```

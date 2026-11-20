@@ -6,10 +6,12 @@ import {
   doc,
   getDoc,
   getDocs,
+  limit,
   onSnapshot,
   orderBy,
   query,
   serverTimestamp,
+  setDoc,
   updateDoc,
   writeBatch,
 } from "firebase/firestore";
@@ -26,9 +28,20 @@ import { db } from "./firebase";
  *   (tasks and goals also get rewarded: true once they've paid out XP)
  *   users/{uid}/goals/{id}      text, color, done
  *   users/{uid}/courses/{id}    code, name, links: [{ id, type, label, url }]
- *   users/{uid}/tasks/{id}      code, name, description, link, date, priority, done
+ *   users/{uid}/tasks/{id}      code, name, description, link, date, priority, done,
+ *                               xp (optional reward for finishing; AI-made tasks set it),
+ *                               planId + kind (study|deadline|subtask) on tasks an agent made,
+ *                               parentId + estMinutes on steps from the breakdown agent
+ *   users/{uid}.dailyQuests     { date, status (picking|ready|error), message,
+ *                               quests: [{ taskId, title, xp, done }] } from the quest agent
  *   users/{uid}/events/{id}     kind (exam|class|meeting|other), title, courseCode,
  *                               date, time, venue, repeatWeekly, until
+ *   users/{uid}/chats/{id}      Planner page chat history: agent (planner|breakdown|review),
+ *                               title, startedOn (YYYY-MM-DD), canContinue,
+ *                               chat: [{ from: "you"|"agent", text, reads? }],
+ *                               createdIds [taskId], createdAt, updatedAt.
+ *                               Only the visible text is kept (no tool results or thinking),
+ *                               and only the newest CHAT_HISTORY_LIMIT chats.
  */
 
 const userDoc = (uid) => doc(db, "users", uid);
@@ -156,7 +169,7 @@ export async function ensureProfile(user) {
 /* Removes a user's profile and all their data (used when a guest signs out). */
 export async function deleteUserData(uid) {
   const snaps = await Promise.all(
-    ["tasks", "courses", "events", "goals"].map((name) => getDocs(userCol(uid, name)))
+    ["tasks", "courses", "events", "goals", "chats"].map((name) => getDocs(userCol(uid, name)))
   );
   const batch = writeBatch(db);
   snaps.forEach((snap) => snap.docs.forEach((d) => batch.delete(d.ref)));
@@ -197,6 +210,31 @@ export const updateTask = (uid, id, changes) =>
 
 export const deleteTask = (uid, id) => deleteDoc(userItem(uid, "tasks", id));
 
+/* One-off reads for the weekly planner agent (it needs fresh data, not a live list). */
+export async function readCollection(uid, name) {
+  const snap = await getDocs(userCol(uid, name));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+/* Saves several tasks at once: either all of them are saved or none. Returns their ids. */
+export async function addTasks(uid, list) {
+  const batch = writeBatch(db);
+  const ids = list.map((data) => {
+    const ref = doc(userCol(uid, "tasks"));
+    batch.set(ref, { ...data, done: false, createdAt: serverTimestamp() });
+    return ref.id;
+  });
+  await batch.commit();
+  return ids;
+}
+
+/* Deletes several tasks at once (used to undo a plan). */
+export async function deleteTasks(uid, ids) {
+  const batch = writeBatch(db);
+  ids.forEach((id) => batch.delete(userItem(uid, "tasks", id)));
+  await batch.commit();
+}
+
 /* Courses */
 export const addCourse = (uid, data) => addDoc(userCol(uid, "courses"), data);
 
@@ -219,3 +257,44 @@ export const updateGoal = (uid, id, changes) =>
   updateDoc(userItem(uid, "goals", id), changes);
 
 export const deleteGoal = (uid, id) => deleteDoc(userItem(uid, "goals", id));
+
+/* Planner chat history */
+export const CHAT_HISTORY_LIMIT = 30;
+
+/* Newest chats first, live. Pending server times are estimated so a new chat sorts to the top at once. */
+export function useChats(uid) {
+  const [state, setState] = useState({ items: [], loading: true, error: null });
+  useEffect(() => {
+    const q = query(userCol(uid, "chats"), orderBy("updatedAt", "desc"), limit(CHAT_HISTORY_LIMIT));
+    return onSnapshot(
+      q,
+      (snap) =>
+        setState({
+          items: snap.docs.map((d) => ({ id: d.id, ...d.data({ serverTimestamps: "estimate" }) })),
+          loading: false,
+          error: null,
+        }),
+      (error) => setState((s) => ({ ...s, loading: false, error }))
+    );
+  }, [uid]);
+  return state;
+}
+
+/* Creates or replaces one chat, then deletes the oldest ones past the limit. */
+export async function saveChat(uid, id, data, isNew) {
+  await setDoc(
+    userItem(uid, "chats", id),
+    { ...data, updatedAt: serverTimestamp(), ...(isNew ? { createdAt: serverTimestamp() } : {}) },
+    { merge: true }
+  );
+  if (!isNew) return;
+  const snap = await getDocs(query(userCol(uid, "chats"), orderBy("updatedAt", "desc")));
+  const old = snap.docs.slice(CHAT_HISTORY_LIMIT);
+  if (old.length) {
+    const batch = writeBatch(db);
+    old.forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+  }
+}
+
+export const deleteChat = (uid, id) => deleteDoc(userItem(uid, "chats", id));

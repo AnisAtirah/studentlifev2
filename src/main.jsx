@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./App.css";
+import "./animations.css";
 import App from "./App.jsx";
 
 // Firebase sign-in is authorized for "localhost" but not "127.0.0.1" (they count as

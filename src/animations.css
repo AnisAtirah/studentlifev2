@@ -1,0 +1,238 @@
+/* ── Motion layer ──
+   Extra animations on top of App.css / Welcome.css. Uses the same palette
+   variables, and stepped timing where it fits so motion feels pixel-art.
+   Entrance animations use fill-mode "backwards" so they never hold a
+   transform afterwards (hover transforms keep working). Everything is
+   switched off for people who ask for reduced motion (bottom of file). */
+
+/* ── Page switch: the keyed wrapper re-mounts on every page change ── */
+.page-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+
+.page-stage > * {
+  animation: rise-in .38s cubic-bezier(.2, .8, .3, 1.15) backwards;
+}
+.page-stage > *:nth-child(2) { animation-delay: .07s; }
+.page-stage > *:nth-child(3) { animation-delay: .14s; }
+.page-stage > *:nth-child(4) { animation-delay: .21s; }
+
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* Stat cards and side cards drop in one after another */
+.stat-card,
+.side-card {
+  animation: pop-in .34s cubic-bezier(.3, 1.4, .5, 1) backwards;
+  transition: transform .12s, box-shadow .12s;
+}
+.stats-row .stat-card:nth-child(2) { animation-delay: .08s; }
+.stats-row .stat-card:nth-child(3) { animation-delay: .16s; }
+.side-col .side-card:nth-child(2)  { animation-delay: .1s; }
+.side-col .side-card:nth-child(3)  { animation-delay: .2s; }
+.side-col .side-card:nth-child(4)  { animation-delay: .3s; }
+
+@keyframes pop-in {
+  from { opacity: 0; transform: scale(.92) translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* Hover: card lifts and its pixel shadow grows */
+.stat-card:hover,
+.side-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 10px 0 rgba(31, 74, 20, .28);
+}
+
+/* Stat icon does a little two-frame wiggle */
+.stat-card:hover .stat-icon-tile { animation: wiggle .4s steps(2) 2; }
+
+@keyframes wiggle {
+  0%, 100% { transform: rotate(0); }
+  50%      { transform: rotate(-8deg) scale(1.06); }
+}
+
+/* ── Sidebar ── */
+.logo-iconL { animation: bob 2s steps(2) infinite; }
+
+/* Nav buttons slide in from the left on load */
+.sidebar-nav .nav-btn { animation: slide-right .3s ease-out backwards; }
+.sidebar-nav .nav-btn:nth-child(2) { animation-delay: .05s; }
+.sidebar-nav .nav-btn:nth-child(3) { animation-delay: .1s; }
+.sidebar-nav .nav-btn:nth-child(4) { animation-delay: .15s; }
+.sidebar-nav .nav-btn:nth-child(5) { animation-delay: .2s; }
+.sidebar-nav .nav-btn:nth-child(6) { animation-delay: .25s; }
+.sidebar-nav .nav-btn:nth-child(7) { animation-delay: .3s; }
+
+@keyframes slide-right {
+  from { opacity: 0; transform: translateX(-18px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* Active page gets a blinking pixel arrow, like a game menu cursor */
+.nav-btn { position: relative; }
+.nav-btn--active::before {
+  content: "";
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  width: 0;
+  height: 0;
+  margin-top: -6px;
+  border-style: solid;
+  border-width: 6px 0 6px 7px;
+  border-color: transparent transparent transparent var(--ink-dark);
+  animation: blink 1s steps(1) infinite;
+}
+
+@keyframes blink { 50% { opacity: 0; } }
+
+/* Avatar frame gives a small hop on hover */
+.avatar-border { transition: transform .1s; }
+.avatar-border:hover { animation: hop-frame .36s steps(2) 2; }
+
+@keyframes hop-frame { 50% { transform: translateY(-5px); } }
+
+/* ── Top banner ── */
+.banner-greeting { animation: greet-in .5s steps(5) backwards; }
+
+@keyframes greet-in {
+  from { clip-path: inset(0 100% 0 0); }
+  to   { clip-path: inset(0 0 0 0); }
+}
+
+/* ── Progress bars: stripes march forward ── */
+.pixel-bar__fill { animation: march .8s steps(5) infinite; }
+
+@keyframes march { to { background-position: 10px 0; } }
+
+/* ── Countdown number pulses like a heartbeat ── */
+.countdown-number { animation: heartbeat 1.4s steps(2) infinite; }
+
+@keyframes heartbeat {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.08); }
+}
+
+/* XP chip shines on task hover */
+.xp-chip { transition: transform .1s; }
+.task-row:hover .xp-chip { animation: xp-bounce .3s steps(2) 2; }
+
+@keyframes xp-bounce { 50% { transform: translateY(-3px); } }
+
+/* ── Buttons: a pixel light sweep on hover ── */
+.pixel-btn,
+.submit-btn { position: relative; overflow: hidden; }
+
+.pixel-btn::after,
+.submit-btn::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -40%;
+  width: 24%;
+  background: rgba(255, 255, 255, .45);
+  transform: skewX(-20deg);
+  pointer-events: none;
+  opacity: 0;
+}
+
+.pixel-btn:hover:not(:disabled)::after,
+.submit-btn:hover:not(:disabled)::after { animation: shine .5s steps(6) forwards; }
+
+@keyframes shine {
+  0%   { left: -40%; opacity: 1; }
+  100% { left: 120%; opacity: 1; }
+}
+
+/* ── Welcome, login and character-select screens ── */
+.welcome-title { animation: float 2.4s steps(3) infinite; }
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-6px); }
+}
+
+.welcome-screen .pixel-window {
+  animation: window-open .45s steps(5) backwards .1s;
+}
+
+@keyframes window-open {
+  from { opacity: 0; transform: scale(.6); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* Title-bar dots light up in turn (they keep their 45deg rotation) */
+.pixel-dot { animation: dot-glow 1.8s steps(1) infinite; }
+.pixel-dot:nth-child(2) { animation-delay: .6s; }
+.pixel-dot:nth-child(3) { animation-delay: 1.2s; }
+
+@keyframes dot-glow {
+  0%   { background: var(--sun-yellow); }
+  33%  { background: #fff; }
+}
+
+/* Pixel clouds drifting across the sky behind the welcome window */
+.welcome-screen {
+  position: relative;
+  overflow: hidden;
+}
+
+.welcome-screen::before,
+.welcome-screen::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  width: 8px;
+  height: 8px;
+  background: transparent;
+  pointer-events: none;
+  /* one blocky cloud drawn out of 8px squares */
+  box-shadow:
+    16px 0 #fff, 24px 0 #fff, 32px 0 #fff,
+    8px 8px #fff, 16px 8px #fff, 24px 8px #fff, 32px 8px #fff, 40px 8px #fff, 48px 8px #fff,
+    0 16px #fff, 8px 16px #fff, 16px 16px #fff, 24px 16px #fff, 32px 16px #fff, 40px 16px #fff, 48px 16px #fff, 56px 16px #fff,
+    8px 24px #e6f2f8, 16px 24px #e6f2f8, 24px 24px #e6f2f8, 32px 24px #e6f2f8, 40px 24px #e6f2f8, 48px 24px #e6f2f8;
+  animation: drift 38s linear infinite;
+}
+
+.welcome-screen::before { top: 9%; transform: scale(1.4); }
+.welcome-screen::after  { top: 24%; animation-duration: 52s; animation-delay: -20s; }
+
+@keyframes drift {
+  from { left: -120px; }
+  to   { left: 100%; }
+}
+
+/* ── Respect reduced-motion settings ── */
+@media (prefers-reduced-motion: reduce) {
+  .page-stage > *,
+  .stat-card,
+  .side-card,
+  .stat-card:hover .stat-icon-tile,
+  .logo-iconL,
+  .sidebar-nav .nav-btn,
+  .nav-btn--active::before,
+  .avatar-border:hover,
+  .banner-greeting,
+  .pixel-bar__fill,
+  .countdown-number,
+  .task-row:hover .xp-chip,
+  .pixel-btn:hover::after,
+  .submit-btn:hover::after,
+  .welcome-title,
+  .welcome-screen .pixel-window,
+  .pixel-dot,
+  .welcome-screen::before,
+  .welcome-screen::after {
+    animation: none !important;
+  }
+  .stat-card:hover,
+  .side-card:hover { transform: none; }
+}

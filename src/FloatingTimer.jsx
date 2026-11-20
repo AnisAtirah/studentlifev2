@@ -2,13 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { PetSprite } from "./Pet";
 import Avatar from "./Avatar";
-import { MODE_LABELS, formatClock } from "./usePomodoro";
+import { formatClock } from "./usePomodoro";
 import { SoundToggle } from "./sounds";
 import SpotifyPlayer from "./SpotifyPlayer";
 import PetBubble from "./PetBubble";
 import { spotifyConfigured } from "./spotify";
 
-const SCENES = { focus: "day", short: "sunset", long: "night" };
+const SCENES = { focus: "day", short: "sunset", long: "night", timer: "day" };
 const POS_KEY = "studentlife.floatingTimer";
 
 /*
@@ -104,7 +104,11 @@ function Controls({ timer }) {
           {timer.progress > 0 ? "Resume" : "Start"}
         </button>
       )}
-      <button className="mini-btn" onClick={timer.skip} title="Skip to the next session">Skip</button>
+      {timer.mode === "timer" ? (
+        <button className="mini-btn" onClick={timer.reset} title="Start this timer over">Reset</button>
+      ) : (
+        <button className="mini-btn" onClick={timer.skip} title="Skip to the next session">Skip</button>
+      )}
     </div>
   );
 }
@@ -115,7 +119,7 @@ export function PopOutTimer({ pipWindow, timer, pet, petState, character, access
   return createPortal(
     <div className={`pip-timer pet-stage--${SCENES[timer.mode]}`}>
       <SoundToggle className="pip-sound" />
-      <div className="pip-timer__mode">{MODE_LABELS[timer.mode]}</div>
+      <div className="pip-timer__mode">{timer.title}</div>
       <PetBubble talk={talk} className="pet-bubble--pip" />
       <div className="pip-timer__pet">
         {pet ? (
@@ -200,7 +204,7 @@ export function FloatingTimer({ timer, pet, petState, character, accessory, onOp
         onPointerUp={onPointerUp}
         title="Drag to move"
       >
-        <span className="mini-timer__mode">{MODE_LABELS[timer.mode]}</span>
+        <span className="mini-timer__mode">{timer.title}</span>
         <span className="mini-timer__icons">
           <SoundToggle />
           {onPopOut && (

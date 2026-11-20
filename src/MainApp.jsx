@@ -8,7 +8,13 @@ import {
   addCourse as dbAddCourse,
   deleteCourse as dbDeleteCourse,
   updateCourse as dbUpdateCourse,
+  deleteTasks as dbDeleteTasks,
+  readCollection,
 } from "./db";
+import { auth } from "./firebase";
+import { callAgentApi, runQuestAgent } from "./agents/runAgent";
+import { getChosenModel } from "./agents/models";
+import QuestBoard from "./QuestBoard";
 import CoursesPage, { normalizeUrl } from "./CoursesPage";
 import CalendarPage, { ExamCountdowns } from "./CalendarPage";
 import { daysUntil, todayKey } from "./dateUtils";
@@ -20,18 +26,22 @@ import {
   deleteGoal as dbDeleteGoal,
 } from "./db";
 import FocusPage from "./FocusPage";
+import PlannerPage from "./PlannerPage";
 import Pet from "./Pet";
-import { usePomodoro, formatClock, MODE_LABELS } from "./usePomodoro";
+import { usePomodoro, formatClock } from "./usePomodoro";
 import { FloatingTimer, PopOutTimer, usePopOut } from "./FloatingTimer";
 import { useSpotify } from "./spotify";
 import Wardrobe, { LevelUpModal, ProgressBadge } from "./Wardrobe";
-import { REWARDS, currentStreak, levelInfo, nextStreak } from "./rewards";
+import { REWARDS, currentStreak, levelInfo, nextStreak, taskReward } from "./rewards";
 import { playSound } from "./sounds";
 import { usePetTalk } from "./petTalk";
 import PetBubble from "./PetBubble";
 import ProfileEditor from "./ProfileEditor";
 import Avatar from "./Avatar";
 
+
+// Focus sessions or timers shorter than this give no XP or coins (custom lengths can be tiny)
+const MIN_REWARD_MINUTES = 10;
 
 // Colors from the Canva design: label color and row background per priority
 const PRIORITY_COLORS = {
@@ -61,6 +71,11 @@ function linkLabel(url) {
 }
 
 const FILTERS = ["All", "Important", "Due Soon", "Medium", "Low", "Completed"];
+
+// Extra coins for finishing all of today's quests
+const QUEST_CLEAR_COINS = 20;
+// A board stuck on "picking" this long (tab closed mid-run) gets picked again
+const QUEST_STALE_MS = 2 * 60 * 1000;
 
 function fmtDate(d) {
   if (!d) return "";
@@ -97,7 +112,10 @@ function HomePage({
   courseFilter,
   onCourseFilterChange,
   loading,
-  events
+  events,
+  questBoard,
+  onQuestRetry,
+  onBreakdown
 }) {
   const total = tasks.length;
   const done = tasks.filter(t => t.done).length;
@@ -198,6 +216,9 @@ function HomePage({
 
           {sortedTasks.map(t => {
             const displayPriority = getDisplayPriority(t);
+            // Steps made by the breakdown agent point at their big task with parentId
+            const parent = t.parentId ? tasks.find(p => p.id === t.parentId) : null;
+            const steps = tasks.filter(s => s.parentId === t.id);
 
             return (
               <div
@@ -235,9 +256,29 @@ function HomePage({
                     </a>
                   )}
 
+                  {(() => {
+                    const info = [
+                      parent && `↳ step of ${parent.name}`,
+                      t.estMinutes && `⏱ ${t.estMinutes} min`,
+                      steps.length > 0 && `🪜 ${steps.filter(s => s.done).length}/${steps.length} steps done`,
+                    ].filter(Boolean);
+                    return info.length > 0 && <div className="task-steps-info">{info.join(" · ")}</div>;
+                  })()}
+
                   {openTaskId === t.id && (
                     <div className="task-desc">
                       {t.description}
+                      {!t.done && !t.parentId && steps.length === 0 && (
+                        <button
+                          className="breakdown-btn"
+                          onClick={e => {
+                            e.stopPropagation();
+                            onBreakdown(t);
+                          }}
+                        >
+                          🪓 Break into steps
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -253,6 +294,7 @@ function HomePage({
                     style={{ color: PRIORITY_COLORS[displayPriority] }}
                   >
                     ● {displayPriority}
+                    {!t.done && <span className="xp-chip">+{taskReward(t).xp} XP</span>}
                   </span>
                 </div>
 
@@ -261,7 +303,8 @@ function HomePage({
                   title="Delete task"
                   onClick={e => {
                     e.stopPropagation();
-                    if (window.confirm(`Delete "${t.name}"?`)) onDelete(t.id);
+                    const also = steps.length ? ` and its ${steps.length} steps` : "";
+                    if (window.confirm(`Delete "${t.name}"${also}?`)) onDelete(t.id);
                   }}
                 >
                   🗑
@@ -275,6 +318,7 @@ function HomePage({
 
       {/* Side column: countdown + course progress */}
       <aside className="side-col">
+        <QuestBoard board={questBoard} tasks={tasks} onToggle={onToggle} onRetry={onQuestRetry} />
         <ExamCountdowns events={events} limit={1} compact />
 
         <div className="side-card side-card--countdown">
@@ -478,16 +522,57 @@ export default function MainApp({ uid, profile, onSignOut, onUpdateProfile }) {
   const toggleTask = (id) => {
     const task = tasks.find(t => t.id === id);
     if (!task) return;
-    // Rewards only the first time a task is finished, so un-ticking/re-ticking can't farm coins
-    if (!task.done && !task.rewarded) {
+    // Rewards only the first time a task is finished, so un-ticking/re-ticking can't farm coins.
+    // If it's one of today's quests, the quest bonus is paid once on top.
+    const board = profileRef.current.dailyQuests;
+    const questIndex = !task.done && board?.date === todayKey() && board.status === "ready"
+      ? board.quests.findIndex(q => q.taskId === id && !q.done)
+      : -1;
+    const base = !task.done && !task.rewarded ? taskReward(task) : null;
+
+    if (base || questIndex >= 0) {
       save(updateTask(uid, id, { done: true, rewarded: true }));
-      grant(REWARDS.task.xp, REWARDS.task.coins, `${task.name} done!`);
+      let xp = base?.xp || 0;
+      let coins = base?.coins || 0;
+      let label = `${task.name} done!`;
+      const more = {};
+      if (questIndex >= 0) {
+        const quest = board.quests[questIndex];
+        const quests = board.quests.map((q, i) => (i === questIndex ? { ...q, done: true } : q));
+        const cleared = quests.every(q => q.done);
+        xp += quest.xp;
+        coins += Math.round(quest.xp / 2) + (cleared ? QUEST_CLEAR_COINS : 0);
+        label = cleared ? `🏆 Quest board cleared! +${QUEST_CLEAR_COINS} bonus coins` : `⚔️ Quest complete: ${quest.title}`;
+        more.dailyQuests = { ...board, quests };
+      }
+      grant(xp, coins, label, more);
     } else {
       save(updateTask(uid, id, { done: !task.done }));
     }
   };
 
-  const deleteTask = (id) => save(dbDeleteTask(uid, id));
+  // Deleting a big task also deletes its steps
+  const deleteTask = (id) => {
+    const steps = tasks.filter(t => t.parentId === id).map(t => t.id);
+    save(steps.length ? dbDeleteTasks(uid, [id, ...steps]) : dbDeleteTask(uid, id));
+  };
+
+  /* Task breakdown: "Break into steps" opens the Planner with a ready-made request */
+  const [plannerRequest, setPlannerRequest] = useState(null);
+  const breakDownTask = (t) => {
+    setPlannerRequest({
+      id: `${t.id}-${Date.now()}`,
+      agent: "breakdown",
+      text: `Break down my task "${t.name}" (${t.code}, due ${t.date}). Task id: ${t.id}`,
+    });
+    setPage("planner");
+  };
+
+  /* Notes review: "Review" in a course folder opens the Planner's review tab */
+  const reviewNotes = (text) => {
+    setPlannerRequest({ id: `review-${Date.now()}`, agent: "review", text });
+    setPage("planner");
+  };
 
   const addTask = (data) => {
     save(dbAddTask(uid, data));
@@ -576,6 +661,49 @@ export default function MainApp({ uid, profile, onSignOut, onUpdateProfile }) {
     playSound("click");
   };
 
+  /*
+   * Daily quest board. Nobody types anything: when the app opens (and the
+   * tasks have loaded), the quest agent runs once per day in the background.
+   */
+  const questRunning = useRef(false);
+  const setQuestBoard = (board) => {
+    profileRef.current = { ...profileRef.current, dailyQuests: board };
+    return onUpdateProfile({ dailyQuests: board });
+  };
+
+  const pickQuests = async () => {
+    if (questRunning.current) return;
+    questRunning.current = true;
+    const date = todayKey();
+    // Claim today's board first, so another open tab doesn't run the agent too
+    save(setQuestBoard({ date, status: "picking", startedAt: Date.now(), quests: [] }));
+    try {
+      const board = await runQuestAgent({
+        store: {
+          read: (name) => readCollection(uid, name),
+          saveQuests: setQuestBoard,
+        },
+        callModel: (messages) => callAgentApi("quests", messages, () => auth.currentUser.getIdToken(), getChosenModel()),
+      });
+      if (!board) save(setQuestBoard({ date, status: "error", quests: [] }));
+    } catch (err) {
+      console.error("Quest agent failed", err);
+      save(setQuestBoard({ date, status: "error", error: err.message, quests: [] }));
+    } finally {
+      questRunning.current = false;
+    }
+  };
+
+  const openTaskCount = tasks.filter(t => !t.done).length;
+  useEffect(() => {
+    if (tasksState.loading || openTaskCount === 0) return; // nothing to pick from (yet)
+    const board = profileRef.current.dailyQuests;
+    const stuck = board?.status === "picking" && Date.now() - (board.startedAt || 0) > QUEST_STALE_MS;
+    if (board?.date === todayKey() && !stuck) return; // already picked today
+    pickQuests();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasksState.loading, openTaskCount]);
+
   const streakDays = currentStreak(profile.streak);
 
   const [profileOpen, setProfileOpen] = useState(false);
@@ -607,10 +735,16 @@ export default function MainApp({ uid, profile, onSignOut, onUpdateProfile }) {
   };
 
   const talkRef = useRef(null);
-  const timer = usePomodoro((mode) => {
-    talkRef.current?.cheer(mode); // pet celebrates the end of the session
-    if (mode !== "focus") {
+  const timer = usePomodoro((mode, minutes) => {
+    const isBreak = mode === "short" || mode === "long";
+    talkRef.current?.cheer(isBreak ? mode : "focus"); // pet celebrates the end of the session
+    if (isBreak) {
       showFlash("Break's over! Ready for another round? 💪");
+      return;
+    }
+    // Custom lengths could be set to 1 minute, so very short sessions don't pay out
+    if (minutes < MIN_REWARD_MINUTES) {
+      showFlash(`Time's up! ⏰ Sessions under ${MIN_REWARD_MINUTES} min don't earn XP.`);
       return;
     }
     const p = profileRef.current;
@@ -620,7 +754,9 @@ export default function MainApp({ uid, profile, onSignOut, onUpdateProfile }) {
     grant(
       REWARDS.focus.xp,
       REWARDS.focus.coins + bonus,
-      bonus ? `Focus session! 🔥 ${streak.count}-day streak bonus` : `Focus session! 🍅 ${count} today`,
+      bonus ? `Focus session! 🔥 ${streak.count}-day streak bonus`
+        : mode === "timer" ? `Timer done${timer.timerLabel ? `: ${timer.timerLabel}` : ""}! 🍅 ${count} today`
+          : `Focus session! 🍅 ${count} today`,
       { focusSessions: (p.focusSessions || 0) + 1, focusToday: { date: today, count }, streak }
     );
   });
@@ -628,18 +764,18 @@ export default function MainApp({ uid, profile, onSignOut, onUpdateProfile }) {
   // Show the countdown in the browser tab while the timer runs
   useEffect(() => {
     document.title = timer.running
-      ? `${formatClock(timer.left)} · ${MODE_LABELS[timer.mode]}`
+      ? `${formatClock(timer.left)} · ${timer.title}`
       : "StudentLife";
-  }, [timer.running, timer.left, timer.mode]);
+  }, [timer.running, timer.left, timer.title]);
 
   const spotify = useSpotify();
   const popOut = usePopOut(setSaveError);
   // Always offer the button; if floating isn't possible here, clicking it explains why
   const popOutAvailable = true;
 
-  // Focus → writing, short break → coffee, long break → nap
+  // Focus or single timer → writing, short break → coffee, long break → nap
   const petState = !timer.running ? "idle"
-    : timer.mode === "focus" ? "work"
+    : timer.mode === "focus" || timer.mode === "timer" ? "work"
       : timer.mode === "short" ? "break"
         : "sleep";
 
@@ -665,7 +801,7 @@ export default function MainApp({ uid, profile, onSignOut, onUpdateProfile }) {
 
   // Motivation, fun facts and break tips in the pet's speech bubble
   const talk = usePetTalk({
-    mode: timer.mode,
+    mode: timer.mode === "timer" ? "focus" : timer.mode, // a single timer is study time too
     running: timer.running,
     petName: profile.pet?.name,
     userName: firstName,
@@ -676,6 +812,7 @@ export default function MainApp({ uid, profile, onSignOut, onUpdateProfile }) {
   const navItems = [
     { key: "home", label: "Home" },
     { key: "add", label: "Add Task" },
+    { key: "planner", label: "Planner" },
     { key: "calendar", label: "Calendar" },
     { key: "focus", label: timer.running ? `Focus ${formatClock(timer.left)}` : "Focus" },
     { key: "courses", label: "My Course" },
@@ -693,19 +830,21 @@ export default function MainApp({ uid, profile, onSignOut, onUpdateProfile }) {
             />
             <span className="logo-text">StudentLife</span>
           </div>
-          <div className="avatar-border">
-            {profile.character ? (
-              <Avatar character={profile.character} accessory={profile.avatarAccessory} className="avatar-img" alt="Your avatar" />
-            ) : (
-              <div className="avatar-fallback">🙂</div>
-            )}
+          <div className="profile-card">
+            <div className="avatar-border">
+              {profile.character ? (
+                <Avatar character={profile.character} accessory={profile.avatarAccessory} className="avatar-img" alt="Your avatar" />
+              ) : (
+                <div className="avatar-fallback">🙂</div>
+              )}
+            </div>
+            <div className="user-name" title={profile.displayName}>
+              {profile.displayName || "Guest"}
+            </div>
+            <button className="edit-profile-btn" onClick={() => setProfileOpen(true)}>
+              <span aria-hidden="true">✎</span> Edit profile
+            </button>
           </div>
-          <div className="user-name" title={profile.displayName}>
-            {profile.displayName || "Guest"}
-          </div>
-          <button className="edit-profile-btn" onClick={() => setProfileOpen(true)}>
-            ✎ Edit profile
-          </button>
           <nav className="sidebar-nav">
             {navItems.map(({ key, label }) => (
               <button
@@ -749,6 +888,7 @@ export default function MainApp({ uid, profile, onSignOut, onUpdateProfile }) {
             </div>
           )}
 
+          <div key={page} className="page-stage">
           {page === "home" && (
             <HomePage
               tasks={tasks}
@@ -761,10 +901,22 @@ export default function MainApp({ uid, profile, onSignOut, onUpdateProfile }) {
               onCourseFilterChange={setCourseFilter}
               loading={tasksState.loading}
               events={events}
+              questBoard={profile.dailyQuests}
+              onQuestRetry={pickQuests}
+              onBreakdown={breakDownTask}
             />
           )}
           {page === "add" && (
             <AddTaskPage courses={courses} onAdd={addTask} />
+          )}
+          {page === "planner" && (
+            <PlannerPage
+              uid={uid}
+              tasks={tasks}
+              onFlash={showFlash}
+              request={plannerRequest}
+              onRequestHandled={() => setPlannerRequest(null)}
+            />
           )}
           {page === "focus" && (
             <FocusPage
@@ -783,6 +935,7 @@ export default function MainApp({ uid, profile, onSignOut, onUpdateProfile }) {
               spotify={spotify}
               streak={streakDays}
               onOpenWardrobe={() => setWardrobeOpen(true)}
+              tasks={tasks}
             />
           )}
           {page === "calendar" && (
@@ -801,8 +954,10 @@ export default function MainApp({ uid, profile, onSignOut, onUpdateProfile }) {
               onDeleteCourse={deleteCourse}
               onAddCourse={addCourse}
               onUpdateCourse={updateCourse}
+              onReview={reviewNotes}
             />
           )}
+          </div>
         </main>
 
         {/* Floating timer on other pages, and the always-on-top pop-out window */}

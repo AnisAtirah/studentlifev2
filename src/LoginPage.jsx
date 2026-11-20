@@ -7,6 +7,9 @@ import "./Welcome.css";
 const ERROR_MESSAGES = {
   "auth/operation-not-allowed":
     "This sign-in method is not turned on in Firebase yet.",
+  // Firebase returns this when the Anonymous provider is disabled
+  "auth/admin-restricted-operation":
+    "Guest mode is not turned on yet. Please sign in with Google.",
   "auth/unauthorized-domain":
     "This website's domain is not authorized in Firebase Auth settings.",
   "auth/popup-blocked": "Your browser blocked the sign-in popup. Allow popups and try again.",
