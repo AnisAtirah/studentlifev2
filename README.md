@@ -75,7 +75,10 @@ If both keys are set, Gemini is used. Add `AI_PROVIDER=anthropic` to switch to C
 
 The keys have no `VITE_` prefix, so they stay on the server and never reach the browser. `npm run dev` serves `api/agent.js` locally, so you don't need the Vercel CLI.
 
-### 5. Start the app
+### 5. Set up Firebase
+Follow [Firebase setup](#firebase-setup) below and put your Firebase config in `.env.local`. Sign-in and saving won't work without it.
+
+### 6. Start the app
 ```
 npm run dev
 ```
@@ -85,14 +88,54 @@ Open **http://localhost:5173** in **Chrome or Edge**.
 - Stop the server with `Ctrl + C`.
 
 ## Firebase setup
-The app uses the Firebase project in `src/firebase.js`. That config is safe to commit; access to data is controlled by `firestore.rules`. In the [Firebase console](https://console.firebase.google.com):
+The Firebase keys are **not** in the code. Each person puts their own in `.env.local`, which is never committed. Do this before step 5 above.
 
-1. **Authentication → Sign-in method**: enable **Google** and **Anonymous** (Anonymous is used for guest mode).
-2. **Authentication → Settings → Authorized domains**: `localhost` is there by default. Add your Vercel domain for the live site.
-3. **Firestore Database**: create a database (e.g. `asia-southeast1`).
-4. **Firestore → Rules**: paste in the contents of `firestore.rules` and **Publish**.
+### 1. Create a Firebase project
+1. Go to the [Firebase console](https://console.firebase.google.com) and click **Add project** (or **Create a project**).
+2. Give it a name (e.g. `studentlife`) and finish the wizard. Google Analytics is optional.
 
-To use your own Firebase project instead, replace the config in `src/firebase.js` with your project's web app config.
+### 2. Register a web app and copy its config
+1. In the project, click the **</>** (Web) icon on the overview page, or go to **⚙️ Project settings → General → Your apps → Add app → Web**.
+2. Give it a nickname and click **Register app**. You don't need Firebase Hosting.
+3. Firebase shows a `firebaseConfig` object like this (you can see it again any time in **Project settings → General → Your apps → SDK setup and configuration → Config**):
+   ```js
+   const firebaseConfig = {
+     apiKey: "AIza...",
+     authDomain: "your-project-id.firebaseapp.com",
+     projectId: "your-project-id",
+     storageBucket: "your-project-id.firebasestorage.app",
+     messagingSenderId: "123456789012",
+     appId: "1:123456789012:web:abc123...",
+     measurementId: "G-XXXXXXXXXX"
+   };
+   ```
+
+### 3. Put the config in `.env.local`
+Copy `.env.example` to `.env.local` (if you haven't already) and fill in each value from that object:
+```
+VITE_FIREBASE_API_KEY=AIza...
+VITE_FIREBASE_AUTH_DOMAIN=your-project-id.firebaseapp.com
+VITE_FIREBASE_PROJECT_ID=your-project-id
+VITE_FIREBASE_STORAGE_BUCKET=your-project-id.firebasestorage.app
+VITE_FIREBASE_MESSAGING_SENDER_ID=123456789012
+VITE_FIREBASE_APP_ID=1:123456789012:web:abc123...
+VITE_FIREBASE_MEASUREMENT_ID=G-XXXXXXXXXX
+```
+`src/firebase.js` reads these in the browser, and `api/_auth.js` uses the API key and project ID to check logins for the AI agents. `measurementId` only matters if you turned on Analytics; leave it empty otherwise. Restart `npm run dev` after editing `.env.local`.
+
+### 4. Turn on sign-in
+1. **Build → Authentication → Get started**.
+2. **Sign-in method**: enable **Google** (pick a support email) and **Anonymous** (Anonymous is used for guest mode).
+3. **Settings → Authorized domains**: `localhost` is there by default. Add your Vercel domain (e.g. `your-app.vercel.app`) for the live site.
+
+### 5. Create the database and publish the rules
+1. **Build → Firestore Database → Create database**. Pick a location close to you (e.g. `asia-southeast1`) and start in **production mode**.
+2. Open the **Rules** tab, replace everything with the contents of `firestore.rules` from this repo, and click **Publish**.
+
+### 6. Add the keys to Vercel (live site)
+In **Vercel → Project → Settings → Environment Variables**, add the same seven `VITE_FIREBASE_*` variables with the same values, then **redeploy**. `VITE_` variables are baked in at build time, so a redeploy is needed after any change.
+
+> **Is the Firebase API key secret?** Not really: a Firebase web API key only identifies your project and ends up in the browser bundle anyway. Your data is protected by `firestore.rules` and Authentication, not by hiding the key. We still keep it out of the repo so every developer uses their own project, and it's good practice to restrict the key in **Google Cloud console → APIs & Services → Credentials** to your domains (`localhost`, your Vercel domain).
 
 ## Troubleshooting
 | Problem | Fix |
@@ -101,6 +144,7 @@ To use your own Firebase project instead, replace the config in `src/firebase.js
 | Google sign-in: `auth/unauthorized-domain` | Use `http://localhost:5173`. For the live site, add its domain in Firebase → Authorized domains. |
 | "This sign-in method is not turned on" | Enable Google / Anonymous in Firebase Authentication. |
 | "Couldn't load your data" | Create the Firestore database and publish `firestore.rules`. |
+| `Firebase is not configured` in the console, or `auth/invalid-api-key` | Fill in the `VITE_FIREBASE_*` values in `.env.local` (or Vercel env vars) and restart `npm run dev` / redeploy. |
 | Pop-out timer does nothing | Open the app in a normal Chrome/Edge tab, not inside VS Code's built-in browser. |
 | Spotify: "Invalid redirect URI" | The redirect URI in the Spotify dashboard must match step 3 exactly. |
 | Spotify: "Open Spotify on your laptop or phone…" | Open the Spotify app and play any song once, then try again. |

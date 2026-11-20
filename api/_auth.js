@@ -1,8 +1,8 @@
 /* Shared by the Vercel functions in api/. Files starting with "_" aren't deployed as routes. */
 
-export const FIREBASE_PROJECT = "studentlife-3d059";
-// Public web API key of the Firebase project (same one as src/firebase.js).
-const FIREBASE_API_KEY = process.env.FIREBASE_API_KEY || "AIzaSyBVlKfXiSD0iWRSJGMe8uTbfnRPTxmapIc";
+// Same Firebase project as src/firebase.js. Set in .env.local / Vercel env vars.
+export const FIREBASE_PROJECT = process.env.FIREBASE_PROJECT_ID || process.env.VITE_FIREBASE_PROJECT_ID;
+const FIREBASE_API_KEY = process.env.FIREBASE_API_KEY || process.env.VITE_FIREBASE_API_KEY;
 
 export const bearerToken = (req) => (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
 
